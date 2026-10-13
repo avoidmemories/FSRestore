@@ -271,6 +271,13 @@ public sealed class WindowGuardianService : IDisposable
                 if (hWnd != IntPtr.Zero && idObject == ObjidWindow)
                 {
                     UpdateTargetState(hWnd);
+                    // A target window just moved/showed — re-arm repair so
+                    // slower restores (e.g. CS2 DXGI flip) still get fixed.
+                    if (IsProcess(hWnd, _targetProcesses)
+                        && DateTime.UtcNow - _lastGameForegroundUtc < TimeSpan.FromSeconds(10))
+                    {
+                        ArmRepair(3);
+                    }
                 }
                 break;
             // MinimizeStart / DesktopSwitch / SwitchEnd are intentionally not
@@ -292,10 +299,10 @@ public sealed class WindowGuardianService : IDisposable
             // Left the game to something else — arm repair so every
             // previously-fullscreen target snaps back, even if focus went to
             // a non-target app (browser behind Telegram, etc.).
-            var recentGame = DateTime.UtcNow - _lastGameForegroundUtc < TimeSpan.FromSeconds(8);
+            var recentGame = DateTime.UtcNow - _lastGameForegroundUtc < TimeSpan.FromSeconds(10);
             if (recentGame)
             {
-                ArmRepair(4);
+                ArmRepair(5);
             }
         }
 
@@ -396,6 +403,9 @@ public sealed class WindowGuardianService : IDisposable
                 continue;
             }
 
+            // Only repair windows that were fullscreen before, or that look
+            // like a game-shrunk remnant (width=workW but height<workH, or
+            // vice versa — i.e., a "cropped" rectangle from custom res).
             var wasFullscreen = _targetWasFullscreen.TryGetValue(hWnd, out var was) && was;
             if (!wasFullscreen && !LooksCropped(hWnd))
             {
