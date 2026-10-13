@@ -1,0 +1,15 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <!-- Plus Jakarta Sans — installed family is "Plus Jakarta Sans".
+         Medium weight file you added registers as that family.
+         Falls back to Segoe. -->
+    <FontFamily x:Key="FontFamilyDisplay">Plus Jakarta Sans SemiBold, Plus Jakarta Sans, Segoe UI Variable Display, Segoe UI</FontFamily>
+    <FontFamily x:Key="FontFamilyText">Plus Jakarta Sans, Segoe UI Variable Text, Segoe UI</FontFamily>
+
+    <sys:Double x:Key="FontSizeTitle">18</sys:Double>
+    <sys:Double x:Key="FontSizeHeading">15</sys:Double>
+    <sys:Double x:Key="FontSizeBody">14</sys:Double>
+    <sys:Double x:Key="FontSizeCaption">12</sys:Double>
+</ResourceDictionary>

@@ -1,0 +1,266 @@
+<Window x:Class="FSRestore.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="FSRestore" Width="640" Height="424"
+        WindowStyle="None" Background="{DynamicResource WindowBackground}"
+        ResizeMode="NoResize"
+        FontFamily="{DynamicResource FontFamilyDisplay}"
+        TextOptions.TextFormattingMode="Ideal" TextOptions.TextHintingMode="Fixed"
+        TextOptions.TextRenderingMode="ClearType" UseLayoutRounding="True" SnapsToDevicePixels="True"
+        KeyDown="Window_KeyDown">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="0" GlassFrameThickness="0"
+                      CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Border BorderBrush="{DynamicResource BorderStrong}" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- title bar: aligned to the same 24px outer padding as the body -->
+            <Grid Grid.Row="0" Margin="24,0,24,0" MouseLeftButtonDown="TitleBar_MouseDown"
+                  Background="Transparent">
+                <!-- whole left cluster toggles guardian -->
+                <ToggleButton x:Name="GuardianToggle" Click="GuardianToggle_Click"
+                              Cursor="Hand" Focusable="False" VerticalAlignment="Center">
+                    <ToggleButton.Template>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock x:Name="GuardianTitle" Text="FSRestore"
+                                           FontSize="18" FontWeight="Bold"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"/>
+                                <Border Width="12" Background="Transparent"/>
+                                <Border x:Name="GuardianTrack" Width="40" Height="22" CornerRadius="11"
+                                        Background="{DynamicResource SurfaceRaised}"
+                                        BorderBrush="{DynamicResource BorderStrong}" BorderThickness="1">
+                                    <Ellipse x:Name="GuardianThumb" Width="16" Height="16"
+                                             Fill="{DynamicResource TextMuted}"
+                                             HorizontalAlignment="Left" Margin="3,0,0,0">
+                                        <Ellipse.RenderTransform>
+                                            <TranslateTransform X="0"/>
+                                        </Ellipse.RenderTransform>
+                                    </Ellipse>
+                                </Border>
+                            </StackPanel>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Trigger.EnterActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="GuardianThumb"
+                                                                 Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                                                 To="18" Duration="0:0:0.18">
+                                                    <DoubleAnimation.EasingFunction>
+                                                        <CubicEase EasingMode="EaseInOut"/>
+                                                    </DoubleAnimation.EasingFunction>
+                                                </DoubleAnimation>
+                                                <ColorAnimation Storyboard.TargetName="GuardianTrack"
+                                                                Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                                To="#FFFFFF" Duration="0:0:0.18"/>
+                                                <ColorAnimation Storyboard.TargetName="GuardianThumb"
+                                                                Storyboard.TargetProperty="(Shape.Fill).(SolidColorBrush.Color)"
+                                                                To="#0F1012" Duration="0:0:0.18"/>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.EnterActions>
+                                    <Trigger.ExitActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="GuardianThumb"
+                                                                 Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                                                 To="0" Duration="0:0:0.18">
+                                                    <DoubleAnimation.EasingFunction>
+                                                        <CubicEase EasingMode="EaseInOut"/>
+                                                    </DoubleAnimation.EasingFunction>
+                                                </DoubleAnimation>
+                                                <ColorAnimation Storyboard.TargetName="GuardianTrack"
+                                                                Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                                To="#1E2024" Duration="0:0:0.18"/>
+                                                <ColorAnimation Storyboard.TargetName="GuardianThumb"
+                                                                Storyboard.TargetProperty="(Shape.Fill).(SolidColorBrush.Color)"
+                                                                To="#5F646C" Duration="0:0:0.18"/>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.ExitActions>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </ToggleButton.Template>
+                </ToggleButton>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <TextBlock Text="Run at startup" Foreground="{DynamicResource TextSecondary}"
+                               FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <ToggleButton x:Name="StartupToggle" Style="{DynamicResource Switch}"
+                                  Click="StartupToggle_Click" VerticalAlignment="Center"
+                                  Focusable="False"/>
+                    <Button Style="{DynamicResource CaptionButton}" Margin="16,0,0,0"
+                            Width="30" Height="28" Click="Minimize_Click">
+                        <Path Data="{StaticResource IconMinimize}" Style="{StaticResource IconGlyph}"
+                              Width="11" Height="11" StrokeThickness="2"/>
+                    </Button>
+                    <Button Style="{DynamicResource CaptionButton}" Width="30" Height="28" Margin="4,0,0,0"
+                            Click="Close_Click">
+                        <Path Data="{StaticResource IconClose}" Style="{StaticResource IconGlyph}"
+                              Width="11" Height="11" StrokeThickness="2"/>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- body -->
+            <Grid Grid.Row="1" Margin="24,4,24,24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="16"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- games -->
+                <Border Grid.Column="0" CornerRadius="12"
+                        Background="{DynamicResource SurfaceBackground}"
+                        BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1" Padding="12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Margin="0,0,0,12">
+                            <TextBlock Text="Games" Foreground="{DynamicResource TextPrimary}"
+                                       FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <Button Style="{DynamicResource PrimaryButton}" Content="Add"
+                                    Click="AddGame_Click" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Height="32" Padding="14,0" FontSize="13"/>
+                        </Grid>
+                        <Grid Grid.Row="1">
+                            <ListBox x:Name="GamesList" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.CanContentScroll="False">
+                                <ListBox.Resources>
+                                    <Style TargetType="ScrollBar" BasedOn="{StaticResource SlimScrollBar}"/>
+                                </ListBox.Resources>
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource ListRow}"/>
+                                </ListBox.ItemContainerStyle>
+                            </ListBox>
+                            <StackPanel x:Name="GamesEmpty" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Visibility="Collapsed">
+                                <Path Data="{StaticResource IconEmpty}" Style="{StaticResource IconGlyph}"
+                                      Width="32" Height="32" Stroke="{DynamicResource TextMuted}"/>
+                                <TextBlock Text="No games added" Foreground="{DynamicResource TextSecondary}"
+                                           FontSize="13" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- apps -->
+                <Border Grid.Column="2" CornerRadius="12"
+                        Background="{DynamicResource SurfaceBackground}"
+                        BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1" Padding="12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Margin="0,0,0,12">
+                            <TextBlock Text="Apps to keep fullscreen" Foreground="{DynamicResource TextPrimary}"
+                                       FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <Button Style="{DynamicResource PrimaryButton}" Content="Add"
+                                    Click="AddTarget_Click" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Height="32" Padding="14,0" FontSize="13"/>
+                        </Grid>
+                        <Grid Grid.Row="1">
+                            <ListBox x:Name="AppsList" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.CanContentScroll="False">
+                                <ListBox.Resources>
+                                    <Style TargetType="ScrollBar" BasedOn="{StaticResource SlimScrollBar}"/>
+                                </ListBox.Resources>
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource ListRow}"/>
+                                </ListBox.ItemContainerStyle>
+                            </ListBox>
+                            <StackPanel x:Name="AppsEmpty" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        Visibility="Collapsed">
+                                <Path Data="{StaticResource IconEmpty}" Style="{StaticResource IconGlyph}"
+                                      Width="32" Height="32" Stroke="{DynamicResource TextMuted}"/>
+                                <TextBlock Text="No apps added" Foreground="{DynamicResource TextSecondary}"
+                                           FontSize="13" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- bottom row removed: status moved into title bar -->
+
+            <!-- modal overlay -->
+            <Grid x:Name="ModalHost" Grid.RowSpan="3" Visibility="Collapsed"
+                  Background="{DynamicResource Overlay}"
+                  MouseLeftButtonDown="ModalHost_Click">
+                <Border x:Name="Dialog" Width="360" Height="380" CornerRadius="14"
+                        Background="{DynamicResource SurfaceRaised}"
+                        BorderBrush="{DynamicResource BorderStrong}" BorderThickness="1"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        MouseLeftButtonDown="Dialog_Click">
+                    <Border.Effect>
+                        <DropShadowEffect Color="Black" BlurRadius="24" ShadowDepth="0" Opacity="0.35"/>
+                    </Border.Effect>
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="DialogShift" Y="12"/>
+                    </Border.RenderTransform>
+                    <Grid Margin="16">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Margin="0,0,0,12">
+                            <TextBlock x:Name="DialogTitle" Text="Add app" Foreground="{DynamicResource TextPrimary}"
+                                       FontSize="16" FontWeight="SemiBold"/>
+                            <Button Style="{DynamicResource IconButton}" Click="CloseDialog"
+                                    HorizontalAlignment="Right">
+                                <Path Data="{StaticResource IconClose}" Style="{StaticResource IconGlyph}"
+                                      Width="14" Height="14"/>
+                            </Button>
+                        </Grid>
+
+                        <TextBox x:Name="SearchBox" Grid.Row="1" Style="{DynamicResource SearchBox}"
+                                 Tag="Search processes..." Margin="0,0,0,12"
+                                 TextChanged="SearchBox_TextChanged"/>
+
+                        <Border Grid.Row="2" CornerRadius="8"
+                                Background="{DynamicResource SurfaceBackground}"
+                                BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1"
+                                MinHeight="220">
+                            <ListBox x:Name="PickerList" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.CanContentScroll="False">
+                                <ListBox.Resources>
+                                    <Style TargetType="ScrollBar" BasedOn="{StaticResource SlimScrollBar}"/>
+                                </ListBox.Resources>
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource PickerRow}"/>
+                                </ListBox.ItemContainerStyle>
+                            </ListBox>
+                        </Border>
+
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                            <Button Style="{DynamicResource PrimaryButton}" Content="Add"
+                                    Click="ConfirmDialog" Padding="24,0"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

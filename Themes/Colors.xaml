@@ -1,0 +1,38 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Window -->
+    <SolidColorBrush x:Key="WindowBackground" Color="#0F1012"/>
+
+    <!-- Surfaces -->
+    <SolidColorBrush x:Key="SurfaceBackground" Color="#17181B"/>
+    <SolidColorBrush x:Key="SurfaceRaised" Color="#1E2024"/>
+    <SolidColorBrush x:Key="SurfaceHover" Color="#26282D"/>
+    <SolidColorBrush x:Key="SurfacePressed" Color="#2E3137"/>
+
+    <!-- Borders -->
+    <SolidColorBrush x:Key="BorderSubtle" Color="#25272C"/>
+    <SolidColorBrush x:Key="BorderStrong" Color="#34373E"/>
+
+    <!-- Text -->
+    <SolidColorBrush x:Key="TextPrimary" Color="#F5F6F7"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#9EA3AB"/>
+    <SolidColorBrush x:Key="TextMuted" Color="#5F646C"/>
+
+    <!-- Buttons: white primary, dark text -->
+    <SolidColorBrush x:Key="ButtonPrimary" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="ButtonPrimaryHover" Color="#E6E7EA"/>
+    <SolidColorBrush x:Key="ButtonPrimaryPressed" Color="#CDD0D5"/>
+    <SolidColorBrush x:Key="ButtonPrimaryText" Color="#0F1012"/>
+
+    <!-- Accent (focus ring, switch track when on) -->
+    <SolidColorBrush x:Key="Accent" Color="#FFFFFF"/>
+
+    <!-- Status -->
+    <SolidColorBrush x:Key="Success" Color="#34C77B"/>
+    <SolidColorBrush x:Key="Danger" Color="#F0524F"/>
+    <SolidColorBrush x:Key="DangerSubtle" Color="#2E1A1B"/>
+
+    <!-- Overlay -->
+    <SolidColorBrush x:Key="Overlay" Color="#B3000000"/>
+</ResourceDictionary>
