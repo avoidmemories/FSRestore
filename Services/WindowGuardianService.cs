@@ -47,7 +47,10 @@ public sealed class WindowGuardianService : IDisposable
     private readonly DispatcherTimer _poll;
 
     // hwnd → was covering work area when last seen not-minimized
+    // hwnd → was covering work area when last seen not-minimized,
+    // plus when we last saw it shrink (to distinguish game-shrink vs manual).
     private readonly Dictionary<IntPtr, bool> _targetWasFullscreen = new();
+    private readonly Dictionary<IntPtr, DateTime> _targetShrunkAt = new();
 
     private HashSet<string> _gameProcesses = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _targetProcesses = new(StringComparer.OrdinalIgnoreCase);
@@ -271,10 +274,17 @@ public sealed class WindowGuardianService : IDisposable
                 if (hWnd != IntPtr.Zero && idObject == ObjidWindow)
                 {
                     UpdateTargetState(hWnd);
-                    // A target window just moved/showed — re-arm repair so
-                    // slower restores (e.g. CS2 DXGI flip) still get fixed.
+                    // A target window just appeared/moved — if it was
+                    // fullscreen before, keep repair armed so a late restore
+                    // still snaps it back even if the 10s game window lapsed.
                     if (IsProcess(hWnd, _targetProcesses)
-                        && DateTime.UtcNow - _lastGameForegroundUtc < TimeSpan.FromSeconds(10))
+                        && _targetWasFullscreen.TryGetValue(hWnd, out var was)
+                        && was)
+                    {
+                        ArmRepair(3);
+                    }
+                    else if (IsProcess(hWnd, _targetProcesses)
+                             && DateTime.UtcNow - _lastGameForegroundUtc < TimeSpan.FromSeconds(10))
                     {
                         ArmRepair(3);
                     }
@@ -329,10 +339,13 @@ public sealed class WindowGuardianService : IDisposable
 
         RefreshTargetStates();
 
-        if (DateTime.UtcNow < _repairUntilUtc)
-        {
-            RepairTargets();
-        }
+        // Always repair: if a tracked window was fullscreen before and is
+        // currently visible but not covering its work area, snap it back.
+        // The wasFullscreen flag is the guard — windows the user manually
+        // shrank below fullscreen aren't in the map as "was fullscreen",
+        // so we never fight deliberate resizes. AllTopLevelMinimized inside
+        // RepairTargets still protects Win+D.
+        RepairTargets();
     }
 
     private void ArmRepair(int seconds)
@@ -358,7 +371,17 @@ public sealed class WindowGuardianService : IDisposable
             return; // keep last-known state; don't overwrite with "shrunk"
         }
 
-        _targetWasFullscreen[hWnd] = CoversWorkArea(hWnd);
+        var covers = CoversWorkArea(hWnd);
+        if (covers)
+        {
+            _targetWasFullscreen[hWnd] = true;
+            _targetShrunkAt.Remove(hWnd);
+            return;
+        }
+
+        // Shrunken: mark when it happened so we can distinguish a fresh
+        // game-shrink (repair) from a stale manual resize (leave alone).
+        _targetShrunkAt.TryAdd(hWnd, DateTime.UtcNow);
     }
 
     private void RefreshTargetStates()
@@ -372,10 +395,25 @@ public sealed class WindowGuardianService : IDisposable
 
         foreach (var h in current)
         {
-            if (!_targetWasFullscreen.ContainsKey(h))
+            if (!_targetWasFullscreen.ContainsKey(h) && CoversWorkArea(h))
             {
-                _targetWasFullscreen[h] = IsIconic(h) || CoversWorkArea(h);
+                _targetWasFullscreen[h] = true;
             }
+        }
+
+        // Forget stale "was fullscreen" flags: if a window has been
+        // continuously shrunken for >15s without a recent game trigger, the
+        // user deliberately resized it — stop forcing it back.
+        var stale = _targetWasFullscreen
+            .Where(kv => kv.Value)
+            .Select(kv => kv.Key)
+            .Where(h => _targetShrunkAt.TryGetValue(h, out var t)
+                        && DateTime.UtcNow - t > TimeSpan.FromSeconds(15)
+                        && DateTime.UtcNow - _lastGameForegroundUtc > TimeSpan.FromSeconds(15))
+            .ToList();
+        foreach (var h in stale)
+        {
+            _targetWasFullscreen[h] = false;
         }
     }
 
@@ -407,7 +445,8 @@ public sealed class WindowGuardianService : IDisposable
             // like a game-shrunk remnant (width=workW but height<workH, or
             // vice versa — i.e., a "cropped" rectangle from custom res).
             var wasFullscreen = _targetWasFullscreen.TryGetValue(hWnd, out var was) && was;
-            if (!wasFullscreen && !LooksCropped(hWnd))
+            var recentGame = DateTime.UtcNow - _lastGameForegroundUtc < TimeSpan.FromSeconds(10);
+            if (!wasFullscreen && !(recentGame && LooksCropped(hWnd)))
             {
                 continue;
             }
