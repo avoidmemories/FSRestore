@@ -2,7 +2,11 @@
 
 Restores fullscreen apps (browsers, Discord, etc.) after a game with a custom resolution minimizes. Fixes the "window is technically maximized but visually shrunk" bug that happens when a stretched-resolution game alt-tabs out.
 
-https://youtu.be/ITtm5PsTJ34?si=JH8MH6ld3fP8P12i
+<p align="center">
+  <a href="https://youtu.be/ITtm5PsTJ34">
+    <img src="https://i.imgur.com/AbC123x.png" alt="Видеоинструкция" width="600">
+  </a>
+</p>
 
 ## How it works
 
