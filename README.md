@@ -1,6 +1,7 @@
 # FSRestore
 
 Restores fullscreen apps (browsers, Discord, etc.) after a game with a custom resolution minimizes. Fixes the "window is technically maximized but visually shrunk" bug that happens when a stretched-resolution game alt-tabs out.
+
 https://youtu.be/ITtm5PsTJ34?si=JH8MH6ld3fP8P12i
 
 ## How it works
