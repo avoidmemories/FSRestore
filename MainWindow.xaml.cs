@@ -10,7 +10,6 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
-using Application = System.Windows.Application;
 using Brush = System.Windows.Media.Brush;
 using Button = System.Windows.Controls.Button;
 using Color = System.Windows.Media.Color;
@@ -23,38 +22,25 @@ namespace FSRestore;
 
 public partial class MainWindow : Window
 {
-    private readonly SettingsStore _store = new();
-    private readonly WindowGuardianService _guardian = new();
-    private readonly AppSettings _settings;
-    private TrayIconService? _tray;
+    private readonly App _app;
+    private AppSettings _settings => _app.Settings;
+    private WindowGuardianService _guardian => _app.Guardian;
     private bool _ready;
-    private bool _exiting;
     private bool _dialogOpen;
 
     // Which list the picker is filling right now
     private List<string>? _pickerTarget;
     private string? _pickerSelected;
 
-    public MainWindow()
+    public MainWindow(App app)
     {
+        _app = app;
         InitializeComponent();
-        _settings = _store.Load();
         StartupToggle.IsChecked = StartupService.IsEnabled();
-        InitTray();
 
         // Seed the process-path cache so icons/friendly names survive restarts.
-        foreach (var app in _guardian.ListOpenApps())
-        {
-            if (app.ProcessPath is not null && !_settings.KnownProcessPaths.ContainsKey(app.ProcessName))
-            {
-                _settings.KnownProcessPaths[app.ProcessName] = app.ProcessPath;
-            }
-        }
-        _store.Save(_settings);
-
-        // Start the guardian immediately — the tray-start path never fires
-        // Loaded, so Configure must not depend on the window being shown.
-        Apply();
+        // Done here, not at app start, so a tray-only launch stays cheap.
+        SeedProcessPathCache();
 
         Loaded += (_, _) =>
         {
@@ -66,26 +52,35 @@ public partial class MainWindow : Window
 
         Closing += (_, e) =>
         {
-            if (!_exiting)
-            {
-                e.Cancel = true;
-                Hide();
-                GC.Collect(); // release managed heap while idle in tray
-                _tray?.ShowBalloon("FSRestore", "Running in tray — right-click to open.");
-            }
-        };
-
-        Closed += (_, _) =>
-        {
-            _store.Save(_settings);
-            _guardian.Dispose();
-            _tray?.Dispose();
+            // Closing the window never exits the app — it lives in the tray.
+            e.Cancel = true;
+            Hide();
+            _app.NotifyHidden();
         };
     }
 
-    private void InitTray()
+    /// <summary>
+    /// Caches exe paths for running processes so list icons and friendly
+    /// names survive after those apps close. Deliberately runs when the
+    /// window is first built rather than at app start, so autostarting into
+    /// the tray does no cross-process work.
+    /// </summary>
+    private void SeedProcessPathCache()
     {
-        _tray = new TrayIconService("FSRestore", ShowWindow, ExitApp);
+        try
+        {
+            foreach (var app in _guardian.ListOpenApps())
+            {
+                if (app.ProcessPath is not null && !_settings.KnownProcessPaths.ContainsKey(app.ProcessName))
+                {
+                    _settings.KnownProcessPaths[app.ProcessName] = app.ProcessPath;
+                }
+            }
+            _app.SaveSettings();
+        }
+        catch
+        {
+        }
     }
 
     // Optional DWM call: rounded window corners on Windows 11.
@@ -103,28 +98,7 @@ public partial class MainWindow : Window
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int pvAttribute, int cbAttribute);
 
-    private void ShowWindow()
-    {
-        Show();
-        WindowState = WindowState.Normal;
-        Activate();
-        Topmost = true;
-        Topmost = false;
-        Focus();
-    }
-
-    private void ExitApp()
-    {
-        _exiting = true;
-        _store.Save(_settings);
-        _tray?.Dispose();
-        Application.Current.Shutdown();
-    }
-
-    private void Apply()
-    {
-        _guardian.Configure(_settings.GameProcesses, _settings.TargetProcesses, _settings.Enabled);
-    }
+    private void Apply() => _app.ApplyGuardian();
 
     private void UpdateStatus()
     {
@@ -156,7 +130,7 @@ public partial class MainWindow : Window
         }
 
         _settings.Enabled = !_settings.Enabled;
-        _store.Save(_settings);
+        _app.SaveSettings();
         Apply();
         UpdateStatus();
     }
@@ -172,7 +146,7 @@ public partial class MainWindow : Window
 
         _settings.RunAtStartup = StartupToggle.IsChecked == true;
         StartupService.SetEnabled(_settings.RunAtStartup);
-        _store.Save(_settings);
+        _app.SaveSettings();
     }
 
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
@@ -257,7 +231,7 @@ public partial class MainWindow : Window
                 {
                     _settings.KnownProcessPaths[_pickerSelected] = path;
                 }
-                _store.Save(_settings);
+                _app.SaveSettings();
                 RenderLists();
                 Apply();
             }
@@ -518,7 +492,7 @@ public partial class MainWindow : Window
         remove.Click += (_, _) =>
         {
             selected.RemoveAll(x => x.Equals(captured, StringComparison.OrdinalIgnoreCase));
-            _store.Save(_settings);
+            _app.SaveSettings();
             RenderLists();
             Apply();
         };

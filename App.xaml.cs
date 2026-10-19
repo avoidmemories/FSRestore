@@ -1,3 +1,5 @@
+using FSRestore.Models;
+using FSRestore.Services;
 using System.Runtime.InteropServices;
 using System.Windows;
 using Application = System.Windows.Application;
@@ -5,10 +7,24 @@ using MessageBox = System.Windows.MessageBox;
 
 namespace FSRestore;
 
+/// <summary>
+/// Owns the long-lived services: settings, the window guardian and the tray
+/// icon. The main window is created lazily — a tray-only launch (the
+/// autostart path) never builds the WPF visual tree at all, which keeps
+/// memory and startup cost low.
+/// </summary>
 public partial class App : Application
 {
     private static Mutex? _mutex;
     private const uint WmShowMe = 0x0402; // WM_USER + 2
+
+    private TrayIconService? _tray;
+    private MainWindow? _window;
+    private bool _exiting;
+
+    internal SettingsStore Store { get; } = new();
+    internal WindowGuardianService Guardian { get; } = new();
+    internal AppSettings Settings { get; private set; } = new();
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -38,24 +54,64 @@ public partial class App : Application
         }
         _mutex = mutex;
 
-        // Start hidden in tray when launched via "Run at startup" (--tray flag).
-        var startHidden = e.Args.Any(a => a.Equals("--tray", StringComparison.OrdinalIgnoreCase));
+        Settings = Store.Load();
 
-        try
+        // Arm the guardian before any UI exists. The tray launch path never
+        // creates a window, and the guardian must still run.
+        ApplyGuardian();
+
+        _tray = new TrayIconService("FSRestore", ShowMainWindow, ExitApp);
+
+        var startHidden = e.Args.Any(a => a.Equals("--tray", StringComparison.OrdinalIgnoreCase));
+        if (!startHidden)
         {
-            var window = new MainWindow();
-            MainWindow = window;
-            if (!startHidden)
-            {
-                window.Show();
-            }
+            ShowMainWindow();
         }
-        catch (Exception ex)
+    }
+
+    /// <summary>Creates the window on first use, then just re-shows it.</summary>
+    internal void ShowMainWindow()
+    {
+        if (_exiting)
         {
-            MessageBox.Show(ex.ToString(), "FSRestore failed to start",
-                MessageBoxButton.OK, MessageBoxImage.Error);
-            Shutdown(1);
+            return;
         }
+
+        if (_window is null)
+        {
+            _window = new MainWindow(this);
+            MainWindow = _window;
+        }
+
+        _window.Show();
+        _window.WindowState = WindowState.Normal;
+        _window.Activate();
+        _window.Topmost = true;
+        _window.Topmost = false;
+        _window.Focus();
+    }
+
+    internal void SaveSettings() => Store.Save(Settings);
+
+    internal void ApplyGuardian() =>
+        Guardian.Configure(Settings.GameProcesses, Settings.TargetProcesses, Settings.Enabled);
+
+    /// <summary>Called when the window hides itself into the tray.</summary>
+    internal void NotifyHidden()
+    {
+        // Hand back the managed heap while the app sits idle in the tray.
+        GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
+        _tray?.ShowBalloon("FSRestore", "Running in tray — right-click to open.");
+    }
+
+    internal void ExitApp()
+    {
+        _exiting = true;
+        SaveSettings();
+        _tray?.Dispose();
+        _tray = null;
+        Guardian.Dispose();
+        Shutdown(0);
     }
 
     private static void SignalExistingInstanceToShow()
@@ -66,21 +122,6 @@ public partial class App : Application
         {
             PostMessage(hwnd, WmShowMe, IntPtr.Zero, IntPtr.Zero);
         }
-    }
-
-    // Called from TrayIconService's WndProc when WmShowMe arrives — forwarded
-    // to the main window to un-hide it.
-    internal static void NotifyExistingInstanceWantsShow(MainWindow window)
-    {
-        window.Dispatcher.Invoke(() =>
-        {
-            window.Show();
-            window.WindowState = WindowState.Normal;
-            window.Activate();
-            window.Topmost = true;
-            window.Topmost = false;
-            window.Focus();
-        });
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]

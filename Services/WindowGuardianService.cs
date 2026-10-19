@@ -34,6 +34,11 @@ public sealed class WindowGuardianService : IDisposable
     private const long WsExToolWindow = 0x00000080L;
     private const long WsExAppWindow = 0x00040000L;
 
+    // How long after the game loses foreground we still treat a shrunken
+    // window as "the game did this" rather than a deliberate user resize.
+    // Keep it short — anything longer fights manual window resizing.
+    private static readonly TimeSpan RecentGameGrace = TimeSpan.FromSeconds(3);
+
     private const uint EventSystemForeground = 0x0003;
     private const uint EventSystemMinimizeStart = 0x0016;
     private const uint EventSystemMinimizeEnd = 0x0017;
@@ -42,23 +47,32 @@ public sealed class WindowGuardianService : IDisposable
     private const uint EventObjectLocationChange = 0x800B;
     private const uint EventObjectShow = 0x8002;
 
+    // Fired by the shell only for user-initiated move/size drags — the most
+    // reliable signal that the user, not a game, changed a window's geometry.
+    private const uint EventSystemMoveSizeStart = 0x000A;
+    private const uint EventSystemMoveSizeEnd = 0x000B;
+
     private readonly WinEventDelegate _eventProc;
     private readonly List<IntPtr> _hooks = [];
     private readonly DispatcherTimer _poll;
 
-    // hwnd → was covering work area when last seen not-minimized
-    // hwnd → was covering work area when last seen not-minimized,
-    // plus when we last saw it shrink (to distinguish game-shrink vs manual).
+    // Snapshot of which target windows covered their work area, captured
+    // while the user is NOT gaming. Frozen for the whole game session and the
+    // short grace period after it, so the repair restores exactly the windows
+    // that were fullscreen before the game — never one the user keeps windowed.
     private readonly Dictionary<IntPtr, bool> _targetWasFullscreen = new();
-    private readonly Dictionary<IntPtr, DateTime> _targetShrunkAt = new();
+
+    // Windows the user resized by hand — never auto-restored until they are
+    // fullscreen again. Also the rect snapshot used to detect that drag.
+    private readonly HashSet<IntPtr> _userResized = [];
+    private readonly Dictionary<IntPtr, RECT> _lastRects = new();
 
     private HashSet<string> _gameProcesses = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _targetProcesses = new(StringComparer.OrdinalIgnoreCase);
     private bool _enabled;
     private bool _gameWasForeground;
     private DateTime _lastGameForegroundUtc = DateTime.MinValue;
-    private DateTime _repairUntilUtc = DateTime.MinValue;
-
+    
     public string SelfProcessName { get; } = Process.GetCurrentProcess().ProcessName;
 
     public WindowGuardianService()
@@ -234,6 +248,7 @@ public sealed class WindowGuardianService : IDisposable
             [EventSystemDesktopSwitch, EventSystemDesktopSwitch],
             [EventObjectShow, EventObjectShow],
             [EventObjectLocationChange, EventObjectLocationChange],
+            [EventSystemMoveSizeStart, EventSystemMoveSizeEnd],
         ];
 
         foreach (var range in ranges)
@@ -268,25 +283,37 @@ public sealed class WindowGuardianService : IDisposable
             case EventSystemForeground:
                 HandleForeground(hWnd);
                 break;
+            case EventSystemMoveSizeStart:
+                // User grabbed a window. Latch it so nothing snaps it back
+                // mid-drag, whatever the poll timer happens to catch.
+                if (hWnd != IntPtr.Zero && IsProcess(hWnd, _targetProcesses))
+                {
+                    _userResized.Add(hWnd);
+                }
+                break;
+            case EventSystemMoveSizeEnd:
+                // Drag finished. If the user put it back to fullscreen, the
+                // latch is cleared by the next status refresh; otherwise it
+                // stays latched and we leave the window alone.
+                break;
             case EventObjectLocationChange:
             case EventObjectShow:
             case EventSystemMinimizeEnd:
-                if (hWnd != IntPtr.Zero && idObject == ObjidWindow)
+                if (hWnd != IntPtr.Zero && idObject == ObjidWindow && IsProcess(hWnd, _targetProcesses))
                 {
-                    UpdateTargetState(hWnd);
-                    // A target window just appeared/moved — if it was
-                    // fullscreen before, keep repair armed so a late restore
-                    // still snaps it back even if the 10s game window lapsed.
-                    if (IsProcess(hWnd, _targetProcesses)
-                        && _targetWasFullscreen.TryGetValue(hWnd, out var was)
-                        && was)
+                    // Refresh the layout snapshot only outside a game session.
+                    // While a game is foreground, or during the grace period
+                    // right after it, sizes are game-affected — don't record.
+                    var gameNow = AnyGameForeground();
+                    var recentGame = DateTime.UtcNow - _lastGameForegroundUtc < RecentGameGrace;
+                    if (!gameNow && !recentGame)
                     {
-                        ArmRepair(3);
+                        UpdateTargetState(hWnd);
                     }
-                    else if (IsProcess(hWnd, _targetProcesses)
-                             && DateTime.UtcNow - _lastGameForegroundUtc < TimeSpan.FromSeconds(10))
+
+                    if (recentGame)
                     {
-                        ArmRepair(3);
+                        ArmRepair();
                     }
                 }
                 break;
@@ -309,15 +336,21 @@ public sealed class WindowGuardianService : IDisposable
             // Left the game to something else — arm repair so every
             // previously-fullscreen target snaps back, even if focus went to
             // a non-target app (browser behind Telegram, etc.).
-            var recentGame = DateTime.UtcNow - _lastGameForegroundUtc < TimeSpan.FromSeconds(10);
+            var recentGame = DateTime.UtcNow - _lastGameForegroundUtc < RecentGameGrace;
             if (recentGame)
             {
-                ArmRepair(5);
+                ArmRepair();
+            }
+
+            // Focus is on a real (non-game) window now — safe to re-read the
+            // layout once the grace period has passed.
+            if (!recentGame)
+            {
+                UpdateTargetState(hWnd);
             }
         }
 
         _gameWasForeground = isGame;
-        UpdateTargetState(hWnd);
     }
 
     // ---------- polling ----------
@@ -337,88 +370,154 @@ public sealed class WindowGuardianService : IDisposable
 
         _gameWasForeground = gameNow;
 
-        RefreshTargetStates();
-
-        // Always repair: if a tracked window was fullscreen before and is
-        // currently visible but not covering its work area, snap it back.
-        // The wasFullscreen flag is the guard — windows the user manually
-        // shrank below fullscreen aren't in the map as "was fullscreen",
-        // so we never fight deliberate resizes. AllTopLevelMinimized inside
-        // RepairTargets still protects Win+D.
-        RepairTargets();
-    }
-
-    private void ArmRepair(int seconds)
-    {
-        var until = DateTime.UtcNow.AddSeconds(seconds);
-        if (until > _repairUntilUtc)
+        // Only refresh the snapshot while the user is not gaming and the
+        // grace period has passed — that is when window sizes reflect the
+        // user's real intent. During a game session the snapshot is frozen.
+        var recentGame = DateTime.UtcNow - _lastGameForegroundUtc < RecentGameGrace;
+        if (!gameNow && !recentGame)
         {
-            _repairUntilUtc = until;
+            RefreshTargetStates();
         }
 
+        TrackUserResize(TargetWindows());
+
         RepairTargets();
     }
 
+    private void ArmRepair()
+    {
+        RepairTargets();
+    }
+
+    // Records the user's own window layout, outside a game session.
+    // Promotion to "fullscreen" happens only when a window genuinely covers
+    // its work area — a small window is never assumed to be broken.
+    // Demotion happens only when Windows has cleared WS_MAXIMIZE, i.e. the
+    // user really put the window into windowed mode; a window the game just
+    // shrank keeps its state so slow-to-recover apps are not dropped.
     private void UpdateTargetState(IntPtr hWnd)
     {
-        if (!IsProcess(hWnd, _targetProcesses))
+        if (!IsProcess(hWnd, _targetProcesses) || IsIconic(hWnd))
         {
             return;
         }
 
-        if (IsIconic(hWnd))
-        {
-            return; // keep last-known state; don't overwrite with "shrunk"
-        }
-
-        var covers = CoversWorkArea(hWnd);
-        if (covers)
+        if (IsZoomed(hWnd) && CoversWorkArea(hWnd))
         {
             _targetWasFullscreen[hWnd] = true;
-            _targetShrunkAt.Remove(hWnd);
+            _userResized.Remove(hWnd);
             return;
         }
 
-        // Shrunken: mark when it happened so we can distinguish a fresh
-        // game-shrink (repair) from a stale manual resize (leave alone).
-        _targetShrunkAt.TryAdd(hWnd, DateTime.UtcNow);
+        // Not covering the work area and not zoomed means the user moved it
+        // into real windowed mode — drop it from the repair set.
+        if (!IsZoomed(hWnd))
+        {
+            _targetWasFullscreen[hWnd] = false;
+        }
     }
 
     private void RefreshTargetStates()
     {
         var current = TargetWindows();
+
         var dead = _targetWasFullscreen.Keys.Where(h => !current.Contains(h)).ToList();
         foreach (var h in dead)
         {
             _targetWasFullscreen.Remove(h);
+            _userResized.Remove(h);
+            _lastRects.Remove(h);
         }
 
         foreach (var h in current)
         {
-            if (!_targetWasFullscreen.ContainsKey(h) && CoversWorkArea(h))
+            if (IsIconic(h))
+            {
+                continue;
+            }
+
+            if (IsZoomed(h) && CoversWorkArea(h))
             {
                 _targetWasFullscreen[h] = true;
+                _userResized.Remove(h);
+                continue;
+            }
+
+            // Not covering the work area. Demote only when Windows has cleared
+            // WS_MAXIMIZE — that means the user deliberately moved the window
+            // into windowed mode. A window that is still zoomed but small was
+            // shrunk by the game, so it keeps its place in the repair set and
+            // slow-to-recover apps (Spotify) are not dropped.
+            //
+            // Windows are never PROMOTED here: nothing is treated as broken
+            // just for being small, so a window the user keeps in windowed
+            // mode is left alone even if it carries the maximize style.
+            if (!IsZoomed(h))
+            {
+                _targetWasFullscreen[h] = false;
             }
         }
+    }
 
-        // Forget stale "was fullscreen" flags: if a window has been
-        // continuously shrunken for >15s without a recent game trigger, the
-        // user deliberately resized it — stop forcing it back.
-        var stale = _targetWasFullscreen
-            .Where(kv => kv.Value)
-            .Select(kv => kv.Key)
-            .Where(h => _targetShrunkAt.TryGetValue(h, out var t)
-                        && DateTime.UtcNow - t > TimeSpan.FromSeconds(15)
-                        && DateTime.UtcNow - _lastGameForegroundUtc > TimeSpan.FromSeconds(15))
-            .ToList();
-        foreach (var h in stale)
+    /// <summary>
+    /// Detects a genuine hand resize: the left mouse button is held AND the
+    /// window under the cursor is the one whose rect changed. Checking the
+    /// cursor is essential — alt-tabbing by clicking also holds the button
+    /// while windows resize, and that must not be mistaken for a user resize.
+    /// </summary>
+    private void TrackUserResize(IReadOnlyList<IntPtr> targets)
+    {
+        if (!IsLeftMouseButtonDown())
         {
-            _targetWasFullscreen[h] = false;
+            foreach (var h in targets)
+            {
+                if (GetWindowRect(h, out var r))
+                {
+                    _lastRects[h] = r;
+                }
+            }
+            return;
         }
+
+        // The window the user is actually interacting with right now.
+        GetCursorPos(out var pt);
+        var underCursor = GetAncestor(WindowFromPoint(pt.X, pt.Y), GaRoot);
+
+        foreach (var hWnd in targets)
+        {
+            if (!GetWindowRect(hWnd, out var r))
+            {
+                continue;
+            }
+
+            if (_lastRects.TryGetValue(hWnd, out var prev)
+                && hWnd == underCursor
+                && (prev.Left != r.Left || prev.Top != r.Top || prev.Right != r.Right || prev.Bottom != r.Bottom))
+            {
+                _userResized.Add(hWnd);
+            }
+
+            _lastRects[hWnd] = r;
+        }
+    }
+
+    private bool SameProcess(IntPtr a, IntPtr b)
+    {
+        GetWindowThreadProcessId(a, out var pa);
+        GetWindowThreadProcessId(b, out var pb);
+        return pa == pb && pa != 0;
     }
 
     private void RepairTargets()
     {
+        // While the left button is held the user is dragging or resizing a
+        // window. Repairing now would fight the drag — the window would snap
+        // back on every mouse move. Wait until the button is released.
+        if (IsLeftMouseButtonDown())
+        {
+            return;
+        }
+
         var targets = TargetWindows();
 
         // Win+D / "show desktop" minimizes every top-level window. In that
@@ -435,18 +534,48 @@ public sealed class WindowGuardianService : IDisposable
                 continue;
             }
 
-            if (CoversWorkArea(hWnd))
+            // A genuinely maximized window that covers its work area is
+            // fullscreen right now. Both conditions matter: size alone is not
+            // enough, because a window the user stretched to screen size by
+            // hand is still a windowed window. Release the "user resized"
+            // latch here too — this runs during a game session as well, so
+            // maximizing a window and jumping straight into a game registers.
+            if (IsZoomed(hWnd) && CoversWorkArea(hWnd))
             {
                 _targetWasFullscreen[hWnd] = true;
+                _userResized.Remove(hWnd);
                 continue;
             }
 
-            // Only repair windows that were fullscreen before, or that look
-            // like a game-shrunk remnant (width=workW but height<workH, or
-            // vice versa — i.e., a "cropped" rectangle from custom res).
+            // The snapshot is the only source of truth for what to restore:
+            // a window the user keeps in windowed mode was never marked
+            // fullscreen, so it is left untouched.
             var wasFullscreen = _targetWasFullscreen.TryGetValue(hWnd, out var was) && was;
-            var recentGame = DateTime.UtcNow - _lastGameForegroundUtc < TimeSpan.FromSeconds(10);
-            if (!wasFullscreen && !(recentGame && LooksCropped(hWnd)))
+            if (!wasFullscreen)
+            {
+                continue;
+            }
+
+            // The broken state this app fixes always carries WS_MAXIMIZE:
+            // the game shrank the rect but left the maximize style in place.
+            // No maximize style means the window is genuinely windowed — the
+            // user un-maximized it (double-click on the caption, Win+Arrow,
+            // window menu) — so drop it right away and leave it alone.
+            //
+            // This check must NOT wait for the post-game grace period:
+            // un-maximizing briefly after a game is exactly when the user
+            // acts, and the grace period suppresses the snapshot refresh.
+            if (!IsZoomed(hWnd))
+            {
+                _targetWasFullscreen[hWnd] = false;
+                _userResized.Remove(hWnd);
+                continue;
+            }
+
+            // Never touch a window the user resized by hand — detected precisely
+            // by watching rect changes while the mouse button is held. It is
+            // released automatically once the window is fullscreen again.
+            if (_userResized.Contains(hWnd))
             {
                 continue;
             }
@@ -504,40 +633,6 @@ public sealed class WindowGuardianService : IDisposable
             return true;
         }, IntPtr.Zero);
         return !anyVisible;
-    }
-
-    /// <summary>
-    /// True when the window's size matches the monitor's work area in one
-    /// dimension but is smaller in the other — the classic "stretched
-    /// resolution left the window cropped" signature. Only applied during
-    /// the armed repair window, so deliberate user resizes outside it are
-    /// safe.
-    /// </summary>
-    private bool LooksCropped(IntPtr hWnd)
-    {
-        if (!GetWindowRect(hWnd, out var r))
-        {
-            return false;
-        }
-
-        var monitor = MonitorFromWindow(hWnd, MonitorDefaultToNearest);
-        var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-        if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info))
-        {
-            return false;
-        }
-
-        var w = r.Right - r.Left;
-        var h = r.Bottom - r.Top;
-        var workW = info.rcWork.Right - info.rcWork.Left;
-        var workH = info.rcWork.Bottom - info.rcWork.Top;
-
-        var matchesW = w >= workW - 4;
-        var matchesH = h >= workH - 4;
-        var smallerW = w < workW - 8 && w > workW / 2;
-        var smallerH = h < workH - 8 && h > workH / 2;
-
-        return (matchesW && smallerH) || (matchesH && smallerW);
     }
 
     private bool CoversWorkArea(IntPtr hWnd)
@@ -644,6 +739,26 @@ public sealed class WindowGuardianService : IDisposable
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
+    [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT lpPoint);
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(int x, int y);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
+    private const uint GaRoot = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    private const int VkLButton = 0x01;
+
+    // True while the user is holding the left mouse button — i.e. dragging
+    // or resizing a window. We never reposition anything during that.
+    private static bool IsLeftMouseButtonDown() => (GetAsyncKeyState(VkLButton) & 0x8000) != 0;
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextLength(IntPtr hWnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageName(IntPtr hProcess, uint dwFlags, char[] lpExeName, ref uint lpdwSize);
