@@ -21,4 +21,10 @@
     <Content Include="FS.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Font embedded as a resource so the app never depends on fonts
+         installed in Windows (those can disappear and crash text layout). -->
+    <Resource Include="Fonts\*.ttf" />
+  </ItemGroup>
+
 </Project>

@@ -2,11 +2,13 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:sys="clr-namespace:System;assembly=mscorlib">
 
-    <!-- Plus Jakarta Sans — installed family is "Plus Jakarta Sans".
-         Medium weight file you added registers as that family.
-         Falls back to Segoe. -->
-    <FontFamily x:Key="FontFamilyDisplay">Plus Jakarta Sans SemiBold, Plus Jakarta Sans, Segoe UI Variable Display, Segoe UI</FontFamily>
-    <FontFamily x:Key="FontFamilyText">Plus Jakarta Sans, Segoe UI Variable Text, Segoe UI</FontFamily>
+    <!-- Plus Jakarta Sans embedded as an application resource (Fonts/*.ttf).
+         The family name inside the file is "Plus Jakarta Sans Medium", so the
+         resource reference must use that exact name after #. WPF maps
+         FontWeight requests onto the embedded face; if anything is off it
+         falls back to Segoe UI, which is always installed. -->
+    <FontFamily x:Key="FontFamilyDisplay">pack://application:,,,/Fonts/#Plus Jakarta Sans, Segoe UI Variable Display, Segoe UI</FontFamily>
+    <FontFamily x:Key="FontFamilyText">pack://application:,,,/Fonts/#Plus Jakarta Sans, Segoe UI Variable Text, Segoe UI</FontFamily>
 
     <sys:Double x:Key="FontSizeTitle">18</sys:Double>
     <sys:Double x:Key="FontSizeHeading">15</sys:Double>

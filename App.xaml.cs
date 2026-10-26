@@ -77,18 +77,31 @@ public partial class App : Application
             return;
         }
 
-        if (_window is null)
+        try
         {
-            _window = new MainWindow(this);
-            MainWindow = _window;
-        }
+            if (_window is null)
+            {
+                _window = new MainWindow(this);
+                MainWindow = _window;
+            }
 
-        _window.Show();
-        _window.WindowState = WindowState.Normal;
-        _window.Activate();
-        _window.Topmost = true;
-        _window.Topmost = false;
-        _window.Focus();
+            _window.Show();
+            _window.WindowState = WindowState.Normal;
+            _window.Activate();
+            _window.Topmost = true;
+            _window.Topmost = false;
+            _window.Focus();
+        }
+        catch (Exception ex)
+        {
+            // A failure during Show (e.g. a font resolving to a missing file)
+            // leaves behind a black, dead HWND. Drop it so the next click
+            // builds a fresh window instead of re-showing the corpse.
+            _window = null;
+            MainWindow = null;
+            MessageBox.Show(ex.Message, "FSRestore failed to open the window",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     internal void SaveSettings() => Store.Save(Settings);
